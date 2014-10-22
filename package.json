@@ -1,16 +1,19 @@
 {
-  "name": "trello",
-  "version": "0.0.0",
-  "description": "ERROR: No README.md file found!",
-  "main": "index.js",
+  "name": "trello2jira",
+  "version": "0.0.1",
+  "description": "Migrate a trello board to Jira",
+  "main": "index.coffee",
   "repository": "",
-  "author": "",
+  "author": "Thom Nichols (tmnichols@gmail.com)",
   "license": "BSD",
   "dependencies": {
     "async": "~0.2.6",
-    "underscore": "~1.6.0",
-    "node-trello": "~0.1.5",
+    "coffee-script": "^1.8.0",
     "commander": "~2.2.0",
-    "jira": "~0.10.0"
-  }
+    "jira": "~0.10.0",
+    "node-trello": "~0.1.5",
+    "underscore": "~1.6.0"
+  },
+  "scripts": {
+	}
 }
