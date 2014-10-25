@@ -1,14 +1,13 @@
 #!/usr/bin/env coffee
 
-_ = require 'underscore'
+_ = require 'lodash'
 async  = require 'async'
 program = require 'commander'
 Trello = require 'node-trello'
 {JiraApi} = require 'jira'
-usermap = require './users'
 
 TRELLO_API_KEY = process.env.TRELLO_API_KEY
-TRELLO_WRITE_ACCESS_TOKEN = process.env.TRELLO_WRITE_ACCESS_TOKEN
+TRELLO_ACCESS_TOKEN = process.env.TRELLO_ACCESS_TOKEN
 JIRA_USERNAME = process.env.JIRA_USERNAME
 JIRA_PASSWORD = process.env.JIRA_PASSWORD
 JIRA_HOST = process.env.JIRA_HOST
@@ -17,17 +16,16 @@ program
   .version '0.0.1'
   .description "Get the JSON object for a given issue"
   .option '-l, --trello_list <value>', 'Trello list id to pull from'
-  .option '-s --status', 'Jira status to assign (which determines the destination column)'
-  .option '-p --jira_project', 'Jira destination project key'
+  .option '-s --status <status>', 'Jira status to assign (which determines the destination column)'
+  .option '-p --jira_project <jira_project>', 'Jira destination project key'
   .parse process.argv
-
 
 TRELLO_LIST_ID = program.trello_list
 PROJECT_KEY = program.jira_project
 JIRA_STATUS = program.status
 
 main = () ->
-  trello = new Trello(TRELLO_API_KEY, TRELLO_WRITE_ACCESS_TOKEN)
+  trello = new Trello(TRELLO_API_KEY, TRELLO_ACCESS_TOKEN)
   jira = new JiraApi('https', JIRA_HOST, 443, JIRA_USERNAME, JIRA_PASSWORD, '2')
 
   trello.get "/1/lists/#{TRELLO_LIST_ID}?cards=all", (err,list) ->
@@ -37,53 +35,79 @@ main = () ->
 
     limit = 1
     count = 0
-    for card in list.cards
-      break if count++ > limit
+    async.eachSeries list.cards, (card, next) ->
       title = card.name
       description = card.desc
       type = if 'bug' in card.labels then "Bug" else "Task"
       status = if card.closed then "Rejected" else JIRA_STATUS
-      console.log card.labels
+#        console.log "Labels", card.labels
       labels = (l.name for l in card.labels)
 
-      console.log create_issue(PROJECT_KEY, title, description, type, JIRA_STATUS, labels)
+#        console.log create_issue(PROJECT_KEY, title, description, type, JIRA_STATUS, labels)
 
-      jira.addNewIssue create_issue(PROJECT_KEY, title, description, type, JIRA_STATUS, labels), 
-        (err,resp) ->
-          return console.error '\nError:', err if err
+      async.waterfall [
+        _.partial( create_issue, jira, PROJECT_KEY, title, description, type, labels )
+#        , _.partial set_status jira, status
+        , _.partial( create_link, jira, card.url, title )
+        , _.partial( create_comments, jira, trello, card.id ) 
+      ]
+      , (err, results) ->
+        console.error err if err
+        next err
 
-          process.stdout.write "  ", title
-          create_link jira, resp.key, card.url, title
-          create_comments jira, trello, resp.key, card.id
-          process.stdout.write '\n'
 
 
-create_issue = (project, title, description, type, status, labels, created, assigned) ->
-  return fields:
-    project:
-      key: project
-    summary: title
-    description: description
-    issuetype:
-      name: type
-    status:
+create_issue = (jira, project, title, description, type, labels, next) ->
+  issue =
+    fields:
+      project:
+        key: project
+      summary: title
+      description: description
+      issuetype:
+        name: type
+      labels: labels
+
+  jira.addNewIssue issue,  (err,resp) ->
+    return next "Error creating issue #{err}" if err
+
+    issue = resp.key
+
+    process.stdout.write "\n ➤  #{title}"
+    process.stdout.write ' ✘' if type == 'Bug'
+    next null, issue
+
+
+set_status = (jira, status, issue, next) ->
+  transition = 
+    transition:
       name: status
-    labels: labels
 
-create_comments = (jira, trello, issue, cardID) ->
-  trello.get "/1/card/#{cardID}/actions?filter=commentCard", (err,resp) ->
-    return console.error "Error getting comments", err if err
-    console.log resp
-    for comment in resp.actions
-      create_comment jira, comment, issue
+  jira.transitionIssue issue, transition, (err,resp) ->
+    return "Error setting status #{err}" if err
 
-creat_comment = (jira, comment, issue) ->
-  jira.addComment issue, comment, (err,resp) ->
-    return console.error "Error adding comment to", issue, err if err
+    process.stdout.write " ✓"
+    next null, issue
 
-    process.stdout.write  ' ✉'
+    
+create_comments = (jira, trello, card_id, issue, next) ->
+  trello.get "/1/card/#{card_id}/actions?filter=commentCard", (err,comments) ->
+    return next "Error getting comments: #{err}" if err
+#    console.log "Comments", comments
+    
+    return next() unless comments.length
+    async.eachSeries comments, _.partial(create_comment, jira, issue), (err) ->
+      next err, issue
 
-create_link = (jira, issue, trello_url, title) ->
+create_comment = (jira, issue, comment, next) ->
+  jira.addComment issue, comment.data.text, (err,resp) ->
+    return next "Error adding comment to #{issue}: #{err}" if err
+
+    process.stdout.write  ' ✎'
+    next()
+
+
+create_link = (jira, trello_url, title, issue, next) ->
   link = 
     globalId: trello_url
     object:
@@ -91,12 +115,14 @@ create_link = (jira, issue, trello_url, title) ->
       title: title
     application:
       name: "Trello"
-    relationship: "original"
+    relationship: "Trello"
 
   jira.createRemoteLink issue, link, (err,resp) ->
-    return console.error "  Error creating link", err if err
+    if err && ! err.toString().match /^201/
+      return next "Error creating link: #{err}"
 
-    console.log " ✓"
+    process.stdout.write " ✪"
+    next null, issue
 
 
 main() if require.main == module

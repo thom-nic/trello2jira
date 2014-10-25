@@ -10,10 +10,9 @@
     "async": "~0.2.6",
     "coffee-script": "^1.8.0",
     "commander": "~2.2.0",
-    "jira": "~0.10.0",
-    "node-trello": "~0.1.5",
-    "underscore": "~1.6.0"
+    "jira": "git+https://github.com/steves/node-jira.git#master",
+    "lodash": "^2.4.1",
+    "node-trello": "~0.1.5"
   },
-  "scripts": {
-	}
+  "scripts": {}
 }
